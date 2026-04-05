@@ -93,7 +93,7 @@ Most CDC tooling (Debezium, AWS DMS, Fivetran) is heavy infrastructure. PostgreS
 ### Prerequisites
 
 - Docker and Docker Compose v2
-- Go 1.22+ (only needed for local development)
+- Go 1.23+ (only needed for local development — not required to run via Docker)
 
 ### Run the full stack
 
@@ -103,44 +103,45 @@ cd streampipe
 docker compose up --build
 ```
 
+No need to run `go mod tidy` or install Go locally — the Docker build handles dependency resolution inside the container.
+
 This starts:
 - `source-db` on `localhost:5433` — PostgreSQL with `wal_level=logical` and seed data
 - `replica-db` on `localhost:5434` — empty replica, schema pre-created
 - `streampipe` on `localhost:8080` — the consumer
 - `prometheus` on `localhost:9090` — scrapes `/metrics`
 
-StreamPipe will create the replication slot and publication automatically on first run, then begin streaming.
+StreamPipe will create the replication slot and find the existing publication on first run, then begin streaming.
 
 ### Watch it work
 
-In a second terminal, generate some changes on the source:
+In a second terminal, generate some changes on the source. If you have `psql` installed:
 
 ```bash
-# Connect to the source DB
-psql postgres://postgres:postgres@localhost:5433/sourcedb
-
--- Insert a new user
-INSERT INTO users (name, email, phone)
-VALUES ('Dave Test', 'dave@example.com', '+1-555-9999');
-
--- Update a product price
-UPDATE products SET price_cents = 9999 WHERE name = 'USB-C Hub';
-
--- Delete an order
-DELETE FROM orders WHERE status = 'cancelled';
+psql postgres://postgres:postgres@localhost:5433/sourcedb \
+  -c "INSERT INTO users (name, email) VALUES ('Dave Test', 'dave@example.com');"
 ```
 
-StreamPipe logs each event as structured JSON. You can also pipe stdout sink output through `jq`:
+Or use Docker directly (no `psql` install needed):
 
 ```bash
-docker compose logs -f streampipe | jq '.'
+# Insert on source
+docker exec -it streampipe-source psql -U postgres -d sourcedb \
+  -c "INSERT INTO users (name, email) VALUES ('Dave Test', 'dave@example.com');"
+
+# Update a product price
+docker exec -it streampipe-source psql -U postgres -d sourcedb \
+  -c "UPDATE products SET price_cents = 9999 WHERE name = 'USB-C Hub';"
 ```
 
-Verify the replica received the changes:
+Verify the replica received the changes (note: `email` and `phone` are redacted by the transform rules):
 
 ```bash
-psql postgres://postgres:postgres@localhost:5434/replicadb -c "SELECT * FROM users;"
+docker exec -it streampipe-replica psql -U postgres -d replicadb \
+  -c "SELECT * FROM users;"
 ```
+
+You should see the row appear with `email = ***REDACTED***` — StreamPipe applied the column redaction transform in-flight before writing to the sink.
 
 ### Check the API
 
@@ -312,4 +313,4 @@ Then add a case to `buildSink()` in `main.go` and a new entry in `config.yaml`. 
 
 ## License
 
-MIT
+MIT — free to use, copy, modify, and distribute for any purpose, including commercially. See [LICENSE](LICENSE) for the full text.
