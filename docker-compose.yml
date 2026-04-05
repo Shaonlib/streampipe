@@ -1,0 +1,73 @@
+services:
+
+  source-db:
+    image: postgres:16-alpine
+    container_name: streampipe-source
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sourcedb
+    command: >
+      postgres
+        -c wal_level=logical
+        -c max_replication_slots=5
+        -c max_wal_senders=5
+        -c wal_keep_size=256
+    volumes:
+      - source-data:/var/lib/postgresql/data
+      - ./migrations/001_seed_source.sql:/docker-entrypoint-initdb.d/001_seed_source.sql
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sourcedb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  replica-db:
+    image: postgres:16-alpine
+    container_name: streampipe-replica
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: replicadb
+    volumes:
+      - replica-data:/var/lib/postgresql/data
+      - ./migrations/002_replica_schema.sql:/docker-entrypoint-initdb.d/002_replica_schema.sql
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d replicadb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  streampipe:
+    build: .
+    container_name: streampipe-consumer
+    depends_on:
+      source-db:
+        condition: service_healthy
+      replica-db:
+        condition: service_healthy
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - pipe-data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: streampipe-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - streampipe
+
+volumes:
+  source-data:
+  replica-data:
+  pipe-data:

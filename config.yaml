@@ -1,0 +1,38 @@
+source:
+  host: source-db
+  port: 5432
+  user: replicator
+  password: replicator_pass
+  database: sourcedb
+  slot_name: streampipe_slot
+  publication_name: streampipe_pub
+
+sink:
+  type: postgres   # postgres | file | stdout
+  postgres:
+    host: replica-db
+    port: 5432
+    user: postgres
+    password: postgres
+    database: replicadb
+  file:
+    path: /data/changes.jsonl
+    format: jsonl   # jsonl | csv
+
+tables:
+  - public.users
+  - public.orders
+  - public.products
+
+transforms:
+  - table: public.users
+    redact:
+      - email
+      - phone
+
+api:
+  port: 8080
+
+monitor:
+  lag_warn_bytes: 1048576    # 1MB — emit a warning log
+  poll_interval_seconds: 5
